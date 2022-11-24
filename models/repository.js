@@ -12,17 +12,16 @@ const { v1: uuidv1 } = require("uuid");
 const utilities = require("../utilities.js");
 const CollectionFilter = require("./collectionFilter.js");
 const CachedRequests = require("../CachedRequestsManager");
-const RepositoryCachesManager = require("./repositoryCachesManager.js");
 global.repositoryEtags = {};
+global.repositoryCache = {};
 
 class Repository {
-  constructor(ModelClass, cached = true) {
+  constructor(ModelClass) {
     this.objectsList = null;
     this.model = ModelClass;
     this.objectsName = ModelClass.getClassName() + "s";
     this.objectsFile = `./data/${this.objectsName}.json`;
     this.initEtag();
-    this.cached = cached;
     this.bindExtraDataMethod = null;
     this.updateResult = {
       ok: 0,
@@ -50,36 +49,41 @@ class Repository {
     return this.objectsList;
   }
   read() {
-    this.objectsList = null;
-    if (this.cached) {
-      this.objectsList = RepositoryCachesManager.find(this.objectsName);
-    }
-    if (this.objectsList == null) {
+    if (!repositoryCache[this.objectsName]) {
+      let rawdata = "";
       try {
-        let rawdata = fs.readFileSync(this.objectsFile);
+        rawdata = fs.readFileSync(this.objectsFile);
         // we assume here that the json data is formatted correctly
         this.objectsList = JSON.parse(rawdata);
-        if (this.cached)
-          RepositoryCachesManager.add(this.objectsName, this.objectsList);
+        repositoryCache[this.objectsName] = this.objectsList;
       } catch (error) {
-        if (error.code === 'ENOENT') {
+        if (error.code === "ENOENT") {
           // file does not exist, it will be created on demand
-          console.log(clc.yellow(`Warning ${this.objectsName} repository does not exist. It will be created on demand`));
+          log(
+            FgYellow,
+            `Warning ${this.objectsName} repository does not exist. It will be created on demand`
+          );
           this.objectsList = [];
         } else {
-          console.log(clc.redBright(`Error while reading ${this.objectsName} repository`));
-          console.log(clc.redBright('--------------------------------------------------'));
-          console.log((clc.red(error)));
+          log(
+            Bright,
+            FgRed,
+            `Error while reading ${this.objectsName} repository`
+          );
+          log(
+            Bright,
+            FgRed,
+            "--------------------------------------------------"
+          );
+          log(Bright, FgRed, error);
         }
       }
-    }
+    } else this.objectsList = repositoryCache[this.objectsName];
   }
   write() {
     this.newETag();
+    repositoryCache[this.objectsName] = null;
     fs.writeFileSync(this.objectsFile, JSON.stringify(this.objectsList));
-    if (this.cached) {
-      RepositoryCachesManager.add(this.objectsName, this.objectsList);
-    }
   }
   nextId() {
     let maxId = 0;
@@ -160,14 +164,6 @@ class Repository {
       index++;
     }
     return false;
-  }
-  bindExtraData(datas) {
-    let bindedDatas = [];
-    if (datas)
-      for (let data of datas) {
-        bindedDatas.push(this.bindExtraDataMethod(data));
-      };
-    return bindedDatas;
   }
   getAll(params = null) {
     let objectsList = this.objects();
